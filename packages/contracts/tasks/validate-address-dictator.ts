@@ -4,14 +4,16 @@ import { ethers } from 'ethers'
 import { task } from 'hardhat/config'
 import * as types from 'hardhat/internal/core/params/argumentTypes'
 import { hexStringEquals } from '@eth-optimism/core-utils'
-import { getContractFactory } from '../src/contract-defs'
+import { getContractFactory, getContractDefinition } from '../src/contract-defs'
 
 import {
   getInput,
   color as c,
-  getArtifact,
+  getArtifactFromManagedName,
   getEtherscanUrl,
+  logSectionHead,
   printComparison,
+  checkDeployedConfig,
 } from '../src/validation-utils'
 
 task('validate:address-dictator')
@@ -49,7 +51,7 @@ task('validate:address-dictator')
 
     const network = await provider.getNetwork()
     console.log()
-    console.log(c.cyan("First make sure you're on the right chain:"))
+    logSectionHead("First make sure you're on the right chain:")
     console.log(
       `Reading from the ${c.red(network.name)} network (Chain ID: ${c.red(
         '' + network.chainId
@@ -57,16 +59,14 @@ task('validate:address-dictator')
     )
     await getInput(c.yellow('OK? Hit enter to continue.'))
 
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const dictatorArtifact = require('../artifacts/contracts/L1/deployment/AddressDictator.sol/AddressDictator.json')
+    const dictatorArtifact = getContractDefinition('AddressDictator')
     const dictatorCode = await provider.getCode(args.dictator)
-    console.log(
-      c.cyan(`
-Now validating the Address Dictator deployment at\n${getEtherscanUrl(
-        network,
-        args.dictator
-      )}`)
-    )
+    logSectionHead(`
+Validate the Address Dictator deployment at\n${getEtherscanUrl(
+      network,
+      args.dictator
+    )}`)
+
     printComparison(
       'Comparing deployed AddressDictator bytecode against local build artifacts',
       'Deployed AddressDictator code',
@@ -107,15 +107,20 @@ Now validating the Address Dictator deployment at\n${getEtherscanUrl(
 
     // Now we loop over those and compare the addresses/deployedBytecode to deployment artifacts.
     for (const pair of namedAddresses) {
+      if (pair.name === 'L2CrossDomainMessenger') {
+        console.log('L2CrossDomainMessenger is set to:', pair.addr)
+        await getInput(c.yellow('OK? Hit enter to continue.'))
+        // This is an L2 predeploy, so we skip bytecode and config validation.
+        continue
+      }
       const currentAddress = await managerContract.getAddress(pair.name)
-      const artifact = getArtifact(pair.name)
+      const artifact = getArtifactFromManagedName(pair.name)
       const addressChanged = !hexStringEquals(currentAddress, pair.addr)
       if (addressChanged) {
-        console.log(
-          c.cyan(`
-Now validating the ${pair.name} deployment.
+        logSectionHead(
+          `Validate the ${pair.name} deployment.
 Current address: ${getEtherscanUrl(network, currentAddress)}
-Upgraded address ${getEtherscanUrl(network, pair.addr)}`)
+Upgraded address ${getEtherscanUrl(network, pair.addr)}`
         )
 
         const code = await provider.getCode(pair.addr)
@@ -146,10 +151,11 @@ Upgraded address ${getEtherscanUrl(network, pair.addr)}`)
               { name: 'Deployed value', value: libAddressManager },
               { name: 'Expected value', value: manager }
             )
+            await getInput(c.yellow('OK? Hit enter to continue.'))
           }
         }
       }
-      await getInput(c.yellow('OK? Hit enter to continue.'))
+      await checkDeployedConfig(provider, pair)
     }
     console.log(c.green('AddressManager Validation complete!'))
   })
